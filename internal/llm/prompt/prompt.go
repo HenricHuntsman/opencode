@@ -58,63 +58,35 @@ func getContextFromPaths() string {
 }
 
 func processContextPaths(workDir string, paths []string) string {
-	var (
-		wg sync.WaitGroup
-		// One slot per configured path keeps output in configured order.
-		perPath = make([][]string, len(paths))
-	)
-
-	// Track processed files to avoid duplicates
-	processedFiles := make(map[string]bool)
-	var processedMutex sync.Mutex
-
-	claim := func(path string) bool {
-		processedMutex.Lock()
-		defer processedMutex.Unlock()
-		lowerPath := strings.ToLower(path)
-		if processedFiles[lowerPath] {
-			return false
+	// Traverse in configured order so overlapping paths have a stable owner.
+	processed := make(map[string]bool)
+	var results []string
+	add := func(path string) {
+		path = filepath.Clean(path)
+		if processed[path] {
+			return
 		}
-		processedFiles[lowerPath] = true
-		return true
+		processed[path] = true
+		if result := processFile(path); result != "" {
+			results = append(results, result)
+		}
 	}
-
-	for i, path := range paths {
-		wg.Add(1)
-		go func(i int, p string) {
-			defer wg.Done()
-
-			if strings.HasSuffix(p, "/") {
-				filepath.WalkDir(filepath.Join(workDir, p), func(path string, d os.DirEntry, err error) error {
-					if err != nil {
-						return err
-					}
-					if !d.IsDir() && claim(path) {
-						if result := processFile(path); result != "" {
-							perPath[i] = append(perPath[i], result)
-						}
-					}
-					return nil
-				})
-				return
-			}
-
-			fullPath := filepath.Join(workDir, p)
-			if claim(fullPath) {
-				if result := processFile(fullPath); result != "" {
-					perPath[i] = append(perPath[i], result)
+	for _, path := range paths {
+		fullPath := filepath.Join(workDir, path)
+		if strings.HasSuffix(path, "/") {
+			_ = filepath.WalkDir(fullPath, func(path string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
 				}
-			}
-		}(i, path)
+				if !d.IsDir() {
+					add(path)
+				}
+				return nil
+			})
+		} else {
+			add(fullPath)
+		}
 	}
-
-	wg.Wait()
-
-	results := make([]string, 0)
-	for _, r := range perPath {
-		results = append(results, r...)
-	}
-
 	return strings.Join(results, "\n")
 }
 

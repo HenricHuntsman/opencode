@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -125,4 +126,31 @@ func TestOllamaContextLength(t *testing.T) {
 
 	assert.EqualValues(t, 32768, ollamaContextLength(*u, "qwen2.5-coder:7b"))
 	assert.EqualValues(t, 0, ollamaContextLength(*u, "unknown-model"))
+}
+
+func TestDiscoverySharesDeadlineAcrossModels(t *testing.T) {
+	resetLocalState(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{{"id": "slow-a"}, {"id": "slow-b"}, {"id": "slow-c"}, {"id": "slow-d"}}})
+			return
+		}
+		if r.URL.Path == "/api/show" {
+			_, _ = io.Copy(io.Discard, r.Body)
+			<-r.Context().Done()
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	start := time.Now()
+	initLocalModels(srv.URL)
+	if elapsed := time.Since(start); elapsed > 4*time.Second {
+		t.Fatalf("discovery exceeded shared budget: %v", elapsed)
+	}
+	for _, id := range []ModelID{"local.slow-a", "local.slow-b", "local.slow-c", "local.slow-d"} {
+		if _, ok := SupportedModels[id]; !ok {
+			t.Errorf("missing model %s after metadata timeout", id)
+		}
+	}
 }

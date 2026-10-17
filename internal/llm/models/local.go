@@ -3,6 +3,7 @@ package models
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -45,9 +46,12 @@ func initLocalModels(endpoint string) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
 	load := func(u url.URL, path string) []localModel {
 		u.Path = path
-		return listLocalModels(u.String())
+		return listLocalModelsContext(ctx, u.String())
 	}
 
 	models := load(*localEndpoint, lmStudioBetaModelsPath)
@@ -65,7 +69,7 @@ func initLocalModels(endpoint string) {
 
 	for i := range models {
 		if models[i].LoadedContextLength == 0 {
-			models[i].LoadedContextLength = ollamaContextLength(*localEndpoint, models[i].ID)
+			models[i].LoadedContextLength = ollamaContextLengthContext(ctx, *localEndpoint, models[i].ID)
 		}
 	}
 
@@ -78,13 +82,22 @@ func initLocalModels(endpoint string) {
 // ollamaContextLength asks an Ollama server for a model's context length.
 // It returns 0 for any other server or on any failure.
 func ollamaContextLength(endpoint url.URL, modelID string) int64 {
+	return ollamaContextLengthContext(context.Background(), endpoint, modelID)
+}
+
+func ollamaContextLengthContext(ctx context.Context, endpoint url.URL, modelID string) int64 {
 	endpoint.Path = ollamaShowPath
 	body, err := json.Marshal(map[string]string{"model": modelID})
 	if err != nil {
 		return 0
 	}
 
-	res, err := localHTTPClient.Post(endpoint.String(), "application/json", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := localHTTPClient.Do(req)
 	if err != nil {
 		return 0
 	}
@@ -127,7 +140,15 @@ type localModel struct {
 }
 
 func listLocalModels(modelsEndpoint string) []localModel {
-	res, err := localHTTPClient.Get(modelsEndpoint)
+	return listLocalModelsContext(context.Background(), modelsEndpoint)
+}
+
+func listLocalModelsContext(ctx context.Context, modelsEndpoint string) []localModel {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsEndpoint, nil)
+	if err != nil {
+		return nil
+	}
+	res, err := localHTTPClient.Do(req)
 	if err != nil {
 		logging.Debug("Failed to list local models",
 			"error", err,
