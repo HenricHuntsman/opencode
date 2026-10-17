@@ -35,7 +35,7 @@ Inventoried all 25 upstream branches, including main, and all 42 open pull reque
 | update-name | 1 | 0 |
 | ux-improvements | 5 | 0 |
 
-Sixteen branches have no unmatched non-merge patches. Do not wholesale-merge these historic branches.
+Seventeen branches have no unmatched non-merge patches. Do not wholesale-merge these historic branches.
 
 ## Selected code review and recovery decisions
 
@@ -111,3 +111,19 @@ Only the selected entries above received code-level review in this pass. Titles 
 4. Permission review for network-capable tools, preserving the local-only workflow.
 
 Preserve contributor attribution and the existing MIT notices for any adapted code. No upstream branch was merged wholesale in this pass.
+
+## Preserved source branches
+
+These refs preserve original upstream commits and authorship in HenricHuntsman/opencode. They are historical recovery copies, not validated releases or changes merged into main.
+
+| Source branch | Fork recovery branch | Original commit |
+| --- | --- | --- |
+| adam/keybinds | recovered-upstream/adam/keybinds | `f49e37320aa4fb71215d198607dd4cac119590e9` |
+| adam/themes | recovered-upstream/adam/themes | `81bb3db9af0d198a3270091fed79c9c0d91cf271` |
+| bubbletea_v2 | recovered-upstream/bubbletea_v2 | `f5e857bad0547a1d8779c7ce94bdadfb329733c5` |
+| feature/context-warning-compact-cmd | recovered-upstream/feature/context-warning-compact-cmd | `99b26f5551b2a8ba64521331db2acee1054540ef` |
+| feature/improve-compact | recovered-upstream/feature/improve-compact | `6d0f96db6bb528dc3c0d9dab1a0626a7ff7b1e73` |
+| openai-compat-providers | recovered-upstream/openai-compat-providers | `4ff4d0428d0cae551e2a946b0753bd6991b28f38` |
+| opencode | recovered-upstream/opencode | `8e7cb039efbb76361fdceea9a7c4219abf856a1f` |
+
+Seven non-main branches have unmatched patches; the other seventeen have patch-equivalent changes in the reviewed baseline. Preserving a branch is distinct from integrating its features.
