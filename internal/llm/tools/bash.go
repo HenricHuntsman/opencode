@@ -38,22 +38,6 @@ const (
 	MaxOutputLength = 30000
 )
 
-var bannedCommands = []string{
-	"alias", "curl", "curlie", "wget", "axel", "aria2c",
-	"nc", "telnet", "lynx", "w3m", "links", "httpie", "xh",
-	"http-prompt", "chrome", "firefox", "safari",
-}
-
-var safeReadOnlyCommands = []string{
-	"ls", "echo", "pwd", "date", "cal", "uptime", "whoami", "id", "groups", "env", "printenv", "set", "unset", "which", "type", "whereis",
-	"whatis", "uname", "hostname", "df", "du", "free", "top", "ps", "kill", "killall", "nice", "nohup", "time", "timeout",
-
-	"git status", "git log", "git diff", "git show", "git branch", "git tag", "git remote", "git ls-files", "git ls-remote",
-	"git rev-parse", "git config --get", "git config --list", "git describe", "git blame", "git grep", "git shortlog",
-
-	"go version", "go help", "go list", "go env", "go doc", "go vet", "go fmt", "go mod", "go test", "go build", "go run", "go install", "go clean",
-}
-
 func bashDescription() string {
 	bannedCommandsStr := strings.Join(bannedCommands, ", ")
 	return fmt.Sprintf(`Executes a given bash command in a persistent shell session with optional timeout, ensuring proper handling and security measures.
@@ -239,34 +223,20 @@ func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		params.Timeout = DefaultTimeout
 	}
 
-	if params.Command == "" {
+	if strings.TrimSpace(params.Command) == "" {
 		return NewTextErrorResponse("missing command"), nil
 	}
 
-	baseCmd := strings.Fields(params.Command)[0]
-	for _, banned := range bannedCommands {
-		if strings.EqualFold(baseCmd, banned) {
-			return NewTextErrorResponse(fmt.Sprintf("command '%s' is not allowed", baseCmd)), nil
-		}
+	if name, banned := bannedCommandIn(params.Command); banned {
+		return NewTextErrorResponse(fmt.Sprintf("command '%s' is not allowed", name)), nil
 	}
 
-	isSafeReadOnly := false
-	cmdLower := strings.ToLower(params.Command)
-
-	for _, safe := range safeReadOnlyCommands {
-		if strings.HasPrefix(cmdLower, strings.ToLower(safe)) {
-			if len(cmdLower) == len(safe) || cmdLower[len(safe)] == ' ' || cmdLower[len(safe)] == '-' {
-				isSafeReadOnly = true
-				break
-			}
-		}
-	}
-
+	safeReadOnly := isSafeReadOnly(params.Command)
 	sessionID, messageID := GetContextValues(ctx)
 	if sessionID == "" || messageID == "" {
 		return ToolResponse{}, fmt.Errorf("session ID and message ID are required for creating a new file")
 	}
-	if !isSafeReadOnly {
+	if !safeReadOnly {
 		p := b.permissions.Request(
 			permission.CreatePermissionRequest{
 				SessionID:   sessionID,

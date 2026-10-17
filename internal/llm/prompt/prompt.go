@@ -59,17 +59,29 @@ func getContextFromPaths() string {
 
 func processContextPaths(workDir string, paths []string) string {
 	var (
-		wg       sync.WaitGroup
-		resultCh = make(chan string)
+		wg sync.WaitGroup
+		// One slot per configured path keeps output in configured order.
+		perPath = make([][]string, len(paths))
 	)
 
 	// Track processed files to avoid duplicates
 	processedFiles := make(map[string]bool)
 	var processedMutex sync.Mutex
 
-	for _, path := range paths {
+	claim := func(path string) bool {
+		processedMutex.Lock()
+		defer processedMutex.Unlock()
+		lowerPath := strings.ToLower(path)
+		if processedFiles[lowerPath] {
+			return false
+		}
+		processedFiles[lowerPath] = true
+		return true
+	}
+
+	for i, path := range paths {
 		wg.Add(1)
-		go func(p string) {
+		go func(i int, p string) {
 			defer wg.Done()
 
 			if strings.HasSuffix(p, "/") {
@@ -77,52 +89,30 @@ func processContextPaths(workDir string, paths []string) string {
 					if err != nil {
 						return err
 					}
-					if !d.IsDir() {
-						// Check if we've already processed this file (case-insensitive)
-						processedMutex.Lock()
-						lowerPath := strings.ToLower(path)
-						if !processedFiles[lowerPath] {
-							processedFiles[lowerPath] = true
-							processedMutex.Unlock()
-
-							if result := processFile(path); result != "" {
-								resultCh <- result
-							}
-						} else {
-							processedMutex.Unlock()
+					if !d.IsDir() && claim(path) {
+						if result := processFile(path); result != "" {
+							perPath[i] = append(perPath[i], result)
 						}
 					}
 					return nil
 				})
-			} else {
-				fullPath := filepath.Join(workDir, p)
+				return
+			}
 
-				// Check if we've already processed this file (case-insensitive)
-				processedMutex.Lock()
-				lowerPath := strings.ToLower(fullPath)
-				if !processedFiles[lowerPath] {
-					processedFiles[lowerPath] = true
-					processedMutex.Unlock()
-
-					result := processFile(fullPath)
-					if result != "" {
-						resultCh <- result
-					}
-				} else {
-					processedMutex.Unlock()
+			fullPath := filepath.Join(workDir, p)
+			if claim(fullPath) {
+				if result := processFile(fullPath); result != "" {
+					perPath[i] = append(perPath[i], result)
 				}
 			}
-		}(path)
+		}(i, path)
 	}
 
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
+	wg.Wait()
 
 	results := make([]string, 0)
-	for result := range resultCh {
-		results = append(results, result)
+	for _, r := range perPath {
+		results = append(results, r...)
 	}
 
 	return strings.Join(results, "\n")
