@@ -1,6 +1,8 @@
 # OpenCode
 
-A terminal-based AI coding assistant maintained in the HenricHuntsman fork. Use the interactive terminal UI to work with a project, or run a single prompt from a script.
+**Your code. Your terminal. Your choice of AI.**
+
+A terminal coding assistant maintained by HenricHuntsman, with local model support, reusable skills, and tools to inspect, edit, and test your projects. Use the interactive terminal UI to work with a project, or run a single prompt from a script.
 
 ## Capabilities
 
