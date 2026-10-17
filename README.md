@@ -7,6 +7,7 @@ A terminal-based AI coding assistant maintained in the HenricHuntsman fork. Use 
 - Chat with supported models from Anthropic, OpenAI, Google Gemini, GitHub Copilot, Groq, OpenRouter, xAI, Azure OpenAI, AWS Bedrock, Google Cloud Vertex AI, and compatible local endpoints.
 - Search and inspect source files, edit files, apply patches, run shell commands, and request language-server diagnostics.
 - Connect external tools through Model Context Protocol (MCP) over stdio or server-sent events (SSE).
+- Load reusable Agent Skills from project and user `SKILL.md` files.
 - Keep conversations and sessions in local SQLite storage.
 - Run one-shot prompts with text or JSON output.
 - Review permission requests before file writes, shell commands, and external tool execution.
@@ -14,7 +15,7 @@ A terminal-based AI coding assistant maintained in the HenricHuntsman fork. Use 
 ## Requirements
 
 - Go 1.24 or later to build from source.
-- A terminal and credentials for at least one supported model provider.
+- A terminal and access to a supported model provider or local OpenAI-compatible server. Local servers do not require a cloud subscription.
 - Optional: language servers for diagnostics and MCP servers for additional tools.
 
 ## Build
@@ -122,7 +123,51 @@ Point `LOCAL_ENDPOINT` at any OpenAI-compatible server. Models are discovered at
 LOCAL_ENDPOINT=http://localhost:11434/v1 opencode
 ```
 
-For Ollama, each model's real context length is read from the server; other servers fall back to 4096 tokens. Discovery gives up after about 1.5 seconds per probe, so an unreachable endpoint delays startup by a few seconds and does not block it. Pick a model with `agents.coder.model` in your config, for example `local.qwen2.5-coder:7b`. Models need tool-calling support to work as a coding agent.
+For Ollama, OpenCode queries `/api/show` for the model's reported context capacity when the model listing does not provide a loaded context length. This capacity is not a measurement of the context allocated to a running Ollama session. LM Studio's reported loaded context length takes precedence when available; otherwise the fallback is 4096 tokens.
+
+Discovery has a shared three-second deadline across listing and metadata requests, with a 1.5-second timeout per request. Models already discovered remain available if metadata requests time out, using the fallback where needed. An unreachable server therefore does not stall startup indefinitely.
+
+Select a model with `agents.coder.model`, for example `local.qwen2.5-coder:7b`. The model and server must support tool calling for coding-agent operations. Start Ollama and download the model before launching OpenCode:
+
+```sh
+ollama pull qwen2.5-coder:7b
+LOCAL_ENDPOINT=http://localhost:11434/v1 opencode
+```
+
+## Agent Skills
+
+Skills provide reusable instructions loaded on demand by the coding agent through the `skill` tool. Create a directory whose name matches the skill name, containing a `SKILL.md` file:
+
+```text
+.opencode/skills/project-checks/SKILL.md
+```
+
+```markdown
+---
+name: project-checks
+description: Verify this project's Go code before proposing a change.
+---
+Run `go vet ./...`, `go build ./...`, and `go test ./... -count=1`.
+Report the checks actually run and any failures.
+```
+
+Project discovery searches `.opencode/skills`, `.claude/skills`, and `.agents/skills`, starting at the working directory and walking up to the Git root (or filesystem root when there is no Git root). User locations are `~/.config/opencode/skills`, `~/.claude/skills`, and `~/.agents/skills`. The first valid skill of a given name wins, so nearer project definitions take precedence. Invalid skills are skipped with a warning.
+
+Names must match their directory and use lowercase letters, digits, and single hyphens, up to 64 characters. A description is required. Optional `license` and `metadata` fields are supported. Setting `metadata: {opencode/autoinvoke: "false"}` hides a skill from the advertised skill list; it does not prevent loading it by name.
+
+This repository includes `go-verify` for development checks and `github-release` for explicitly requested releases. Skills supply instructions; they do not install additional tools or grant permissions.
+
+## Project context
+
+Use `contextPaths` in `.opencode.json` to include project instructions. Paths are resolved relative to the working directory. End a directory path with `/` to include its files recursively:
+
+```json
+{
+  "contextPaths": ["AGENTS.md", "docs/project-context/"]
+}
+```
+
+Context files follow configured path order, with directory contents traversed in lexical order. Repeated or overlapping file paths are included once. Symlink aliases are not resolved for deduplication.
 
 ## Permissions and tools
 
@@ -168,12 +213,16 @@ Connected language servers can provide diagnostics to the coding agent.
 
 ## Development
 
-Run the test suite and build the application with:
+Run the repository verification checks with:
 
 ```sh
-go test ./...
+gofmt -l .
+go vet ./...
 go build ./...
+go test ./... -count=1
 ```
+
+`gofmt -l .` should produce no output. CI also verifies module checksums with `go mod verify` and runs build, vet, and tests on Ubuntu 24.04 using the Go version from `go.mod`.
 
 The CLI entry point is in `cmd/`; providers, models, and tools are under `internal/llm/`; the terminal UI is under `internal/tui/`.
 
