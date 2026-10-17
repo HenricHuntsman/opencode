@@ -189,7 +189,7 @@ func TestLsTool_Run(t *testing.T) {
 	t.Run("handles relative path", func(t *testing.T) {
 		tool := NewLsTool()
 		params := LSParams{
-			Path: ".",
+			Path: "dir1",
 		}
 
 		paramsJSON, err := json.Marshal(params)
@@ -203,9 +203,8 @@ func TestLsTool_Run(t *testing.T) {
 		response, err := tool.Run(context.Background(), call)
 		require.NoError(t, err)
 		
-		// Should list the temp directory contents
-		assert.Contains(t, response.Content, "dir1")
-		assert.Contains(t, response.Content, "file1.txt")
+		// Should resolve the relative path against the configured working directory
+		assert.Contains(t, response.Content, "file3.txt")
 	})
 }
 
