@@ -113,6 +113,17 @@ Keep credentials out of source control. Environment variables are recommended fo
 
 The default data directory is `.opencode`. Use the `data.directory` setting to choose another location. Other settings include `agents`, `mcpServers`, `lsp`, `shell`, `contextPaths`, `debug`, `debugLSP`, `autoCompact`, and `tui.theme`.
 
+## Local models (Ollama, LM Studio)
+
+Point `LOCAL_ENDPOINT` at any OpenAI-compatible server. Models are discovered at startup and appear as `local.<name>`.
+
+```sh
+# Ollama
+LOCAL_ENDPOINT=http://localhost:11434/v1 opencode
+```
+
+For Ollama, each model's real context length is read from the server; other servers fall back to 4096 tokens. Discovery gives up after about 1.5 seconds per probe, so an unreachable endpoint delays startup by a few seconds and does not block it. Pick a model with `agents.coder.model` in your config, for example `local.qwen2.5-coder:7b`. Models need tool-calling support to work as a coding agent.
+
 ## Permissions and tools
 
 The coding agent can read and search files, edit and write files, apply patches, run shell commands, fetch web content, and use configured MCP tools. In interactive sessions, operations that can modify files or perform external actions ask for approval. Review each request before allowing it; approval can also be remembered for the current session.

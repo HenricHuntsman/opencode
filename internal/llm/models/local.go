@@ -1,6 +1,7 @@
 package models
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/opencode-ai/opencode/internal/logging"
@@ -19,42 +21,92 @@ const (
 
 	localModelsPath        = "v1/models"
 	lmStudioBetaModelsPath = "api/v0/models"
+	ollamaShowPath         = "api/show"
 )
 
+// A dead endpoint must not stall startup, since discovery runs in init().
+var localHTTPClient = &http.Client{Timeout: 1500 * time.Millisecond}
+
 func init() {
-	if endpoint := os.Getenv("LOCAL_ENDPOINT"); endpoint != "" {
-		localEndpoint, err := url.Parse(endpoint)
-		if err != nil {
-			logging.Debug("Failed to parse local endpoint",
-				"error", err,
-				"endpoint", endpoint,
-			)
-			return
-		}
+	initLocalModels(os.Getenv("LOCAL_ENDPOINT"))
+}
 
-		load := func(url *url.URL, path string) []localModel {
-			url.Path = path
-			return listLocalModels(url.String())
-		}
-
-		models := load(localEndpoint, lmStudioBetaModelsPath)
-
-		if len(models) == 0 {
-			models = load(localEndpoint, localModelsPath)
-		}
-
-		if len(models) == 0 {
-			logging.Debug("No local models found",
-				"endpoint", endpoint,
-			)
-			return
-		}
-
-		loadLocalModels(models)
-
-		viper.SetDefault("providers.local.apiKey", "dummy")
-		ProviderPopularity[ProviderLocal] = 0
+func initLocalModels(endpoint string) {
+	if endpoint == "" {
+		return
 	}
+
+	localEndpoint, err := url.Parse(endpoint)
+	if err != nil {
+		logging.Debug("Failed to parse local endpoint",
+			"error", err,
+			"endpoint", endpoint,
+		)
+		return
+	}
+
+	load := func(u url.URL, path string) []localModel {
+		u.Path = path
+		return listLocalModels(u.String())
+	}
+
+	models := load(*localEndpoint, lmStudioBetaModelsPath)
+
+	if len(models) == 0 {
+		models = load(*localEndpoint, localModelsPath)
+	}
+
+	if len(models) == 0 {
+		logging.Debug("No local models found",
+			"endpoint", endpoint,
+		)
+		return
+	}
+
+	for i := range models {
+		if models[i].LoadedContextLength == 0 {
+			models[i].LoadedContextLength = ollamaContextLength(*localEndpoint, models[i].ID)
+		}
+	}
+
+	loadLocalModels(models)
+
+	viper.SetDefault("providers.local.apiKey", "dummy")
+	ProviderPopularity[ProviderLocal] = 0
+}
+
+// ollamaContextLength asks an Ollama server for a model's context length.
+// It returns 0 for any other server or on any failure.
+func ollamaContextLength(endpoint url.URL, modelID string) int64 {
+	endpoint.Path = ollamaShowPath
+	body, err := json.Marshal(map[string]string{"model": modelID})
+	if err != nil {
+		return 0
+	}
+
+	res, err := localHTTPClient.Post(endpoint.String(), "application/json", bytes.NewReader(body))
+	if err != nil {
+		return 0
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return 0
+	}
+
+	var show struct {
+		ModelInfo map[string]any `json:"model_info"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&show); err != nil {
+		return 0
+	}
+	for key, value := range show.ModelInfo {
+		if strings.HasSuffix(key, ".context_length") {
+			if n, ok := value.(float64); ok && n > 0 {
+				return int64(n)
+			}
+		}
+	}
+	return 0
 }
 
 type localModelList struct {
@@ -75,7 +127,7 @@ type localModel struct {
 }
 
 func listLocalModels(modelsEndpoint string) []localModel {
-	res, err := http.Get(modelsEndpoint)
+	res, err := localHTTPClient.Get(modelsEndpoint)
 	if err != nil {
 		logging.Debug("Failed to list local models",
 			"error", err,
