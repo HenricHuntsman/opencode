@@ -41,7 +41,7 @@ Thumbs.db
 .env
 .env.local
 
-.opencode/
-
+.opencode/*
+!.opencode/skills/
 opencode
 opencode.md
