@@ -232,4 +232,4 @@ This fork continues the original [opencode-ai/opencode](https://github.com/openc
 
 ## License
 
-OpenCode is licensed under the MIT License. See [LICENSE](LICENSE).
+OpenCode is licensed under the MIT License. Original copyright: 2025 Kujtim Hoxha. Fork contributions: 2026 HenricHuntsman. The original copyright and permission notices are preserved in [LICENSE](LICENSE). Third-party dependencies and assets remain subject to their respective licences.
