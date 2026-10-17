@@ -16,7 +16,7 @@ builds:
     main: ./main.go
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     name_template: >-
       opencode-
       {{- if eq .Os "darwin" }}mac-
@@ -28,11 +28,11 @@ archives:
       {{- if .Arm }}v{{ .Arm }}{{ end }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
 checksum:
   name_template: "checksums.txt"
 snapshot:
-  name_template: "0.0.0-{{ .Timestamp }}"
+  version_template: "0.0.0-{{ .Timestamp }}"
 nfpms:
   - maintainer: kujtimiihoxha
     description: terminal based agent that can build anything
