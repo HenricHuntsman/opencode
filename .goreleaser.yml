@@ -1,7 +1,5 @@
 version: 2
 project_name: opencode
-before:
-  hooks:
 builds:
   - env:
       - CGO_ENABLED=0
@@ -17,6 +15,9 @@ builds:
 
 archives:
   - formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
     name_template: >-
       opencode-
       {{- if eq .Os "darwin" }}mac-
@@ -34,8 +35,10 @@ checksum:
 snapshot:
   version_template: "0.0.0-{{ .Timestamp }}"
 nfpms:
-  - maintainer: kujtimiihoxha
-    description: terminal based agent that can build anything
+  - maintainer: HenricHuntsman
+    homepage: https://github.com/HenricHuntsman/opencode
+    license: MIT
+    description: Terminal coding assistant with local model support and reusable skills
     formats:
       - deb
       - rpm

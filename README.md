@@ -1,8 +1,10 @@
-# OpenCode
+# OpenCode — Welcome Back Edition
 
 **Your code. Your terminal. Your choice of AI.**
 
 A terminal coding assistant maintained by HenricHuntsman, with local model support, reusable skills, and tools to inspect, edit, and test your projects. Use the interactive terminal UI to work with a project, or run a single prompt from a script.
+
+An independently maintained community fork of the original OpenCode project. This edition is in development; the original project and Crush retain their own maintainers and release histories.
 
 ## Capabilities
 
