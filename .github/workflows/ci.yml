@@ -21,6 +21,8 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - run: bash -n install
+      - run: python3 scripts/test_install.py
       - run: go mod verify
       - run: go build ./...
       - run: go vet ./...

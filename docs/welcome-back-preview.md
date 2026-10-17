@@ -11,7 +11,7 @@ This is an independently maintained community fork by HenricHuntsman. It continu
 - Ollama model context metadata, with a fallback when unavailable.
 - Go CI, updated release configuration, and expanded setup documentation.
 - Original MIT notices retained, with attribution for fork contributions.
-- Fork package metadata and installer download links.
+- Fork package metadata and an installer with checksum verification, isolated temporary files, and offline failure tests.
 - Explicit release version preserved instead of overwritten by module metadata.
 
 ## Release checks
@@ -25,6 +25,14 @@ Before publishing a numbered release:
 5. Test other supported platforms on suitable machines; cross-compilation alone is not a runtime test.
 6. Confirm packaged archives include `LICENSE` and `README.md`, and verify their checksums.
 7. Choose a new fork release tag and review release notes before publication.
+
+## Additional validation
+
+The installer has offline tests for explicit and latest versions, ARM64 asset selection, paths containing spaces, failed downloads, missing version metadata, invalid versions, checksum mismatches, and temporary-file cleanup. These tests use fixtures and do not download a real release.
+
+The Linux preview also passed model discovery, streamed text and JSON output, and a file-view tool round trip against a deterministic local OpenAI-compatible fixture server. This is a protocol test, not a real Ollama/model test.
+
+One-shot mode automatically approves session tool requests; the README documents this behavior.
 
 ## Current limitations
 

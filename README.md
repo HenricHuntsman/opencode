@@ -177,6 +177,8 @@ Context files follow configured path order, with directory contents traversed in
 
 The coding agent can read and search files, edit and write files, apply patches, run shell commands, fetch web content, and use configured MCP tools. In interactive sessions, operations that can modify files or perform external actions ask for approval. Review each request before allowing it; approval can also be remembered for the current session.
 
+One-shot mode (`--prompt`) automatically approves permission requests for that session. Use it only with trusted prompts and projects; it can modify files and execute tools without interactive confirmation.
+
 The delegated search agent is read-only and can list, search, and view files without modifying them.
 
 ## MCP servers
@@ -220,6 +222,8 @@ Connected language servers can provide diagnostics to the coding agent.
 Run the repository verification checks with:
 
 ```sh
+python3 scripts/test_install.py
+bash -n install
 gofmt -l .
 go vet ./...
 go build ./...
