@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/opencode-ai/opencode/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,6 +29,9 @@ func TestLsTool_Run(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "ls_tool_test")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
+
+	_, err = config.Load(filepath.Dir(tempDir), false)
+	require.NoError(t, err)
 
 	// Create a test directory structure
 	testDirs := []string{
