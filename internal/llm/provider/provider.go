@@ -155,6 +155,7 @@ func NewProvider(providerName models.ModelProvider, opts ...ProviderClientOption
 	case models.ProviderLocal:
 		clientOptions.openaiOptions = append(clientOptions.openaiOptions,
 			WithOpenAIBaseURL(os.Getenv("LOCAL_ENDPOINT")),
+			WithOpenAIDisableReasoningEffort(),
 		)
 		return &baseProvider[OpenAIClient]{
 			options: clientOptions,

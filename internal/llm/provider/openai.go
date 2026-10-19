@@ -19,10 +19,11 @@ import (
 )
 
 type openaiOptions struct {
-	baseURL         string
-	disableCache    bool
-	reasoningEffort string
-	extraHeaders    map[string]string
+	baseURL                string
+	disableCache           bool
+	reasoningEffort        string
+	disableReasoningEffort bool
+	extraHeaders           map[string]string
 }
 
 type OpenAIOption func(*openaiOptions)
@@ -168,15 +169,17 @@ func (o *openaiClient) preparedParams(messages []openai.ChatCompletionMessagePar
 
 	if o.providerOptions.model.CanReason == true {
 		params.MaxCompletionTokens = openai.Int(o.providerOptions.maxTokens)
-		switch o.options.reasoningEffort {
-		case "low":
-			params.ReasoningEffort = shared.ReasoningEffortLow
-		case "medium":
-			params.ReasoningEffort = shared.ReasoningEffortMedium
-		case "high":
-			params.ReasoningEffort = shared.ReasoningEffortHigh
-		default:
-			params.ReasoningEffort = shared.ReasoningEffortMedium
+		if !o.options.disableReasoningEffort {
+			switch o.options.reasoningEffort {
+			case "low":
+				params.ReasoningEffort = shared.ReasoningEffortLow
+			case "medium":
+				params.ReasoningEffort = shared.ReasoningEffortMedium
+			case "high":
+				params.ReasoningEffort = shared.ReasoningEffortHigh
+			default:
+				params.ReasoningEffort = shared.ReasoningEffortMedium
+			}
 		}
 	} else {
 		params.MaxTokens = openai.Int(o.providerOptions.maxTokens)
@@ -422,4 +425,10 @@ func WithReasoningEffort(effort string) OpenAIOption {
 		}
 		options.reasoningEffort = defaultReasoningEffort
 	}
+}
+
+// WithOpenAIDisableReasoningEffort omits the OpenAI-specific reasoning_effort
+// request field for compatible endpoints that do not implement it.
+func WithOpenAIDisableReasoningEffort() OpenAIOption {
+	return func(options *openaiOptions) { options.disableReasoningEffort = true }
 }

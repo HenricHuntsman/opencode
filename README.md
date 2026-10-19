@@ -131,6 +131,8 @@ For Ollama, OpenCode queries `/api/show` for the model's reported context capaci
 
 Discovery has a shared three-second deadline across listing and metadata requests, with a 1.5-second timeout per request. Models already discovered remain available if metadata requests time out, using the fallback where needed. An unreachable server therefore does not stall startup indefinitely.
 
+Local endpoint requests omit the OpenAI-specific `reasoning_effort` field for compatibility. This does not disable a model's internal reasoning.
+
 Select a model with `agents.coder.model`, for example `local.qwen2.5-coder:7b`. The model and server must support tool calling for coding-agent operations. Start Ollama and download the model before launching OpenCode:
 
 ```sh
