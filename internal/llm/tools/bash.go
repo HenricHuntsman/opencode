@@ -203,6 +203,65 @@ Important:
 - Never update git config`, bannedCommandsStr, MaxOutputLength)
 }
 
+// bashBaseCommands splits a (possibly compound) command into the base command
+// name of each individual segment, so banned commands hidden behind shell
+// operators can still be detected.
+func bashBaseCommands(command string) []string {
+	normalized := command
+	for _, op := range []string{"&&", "||", ";", "|", "\n", "&"} {
+		normalized = strings.ReplaceAll(normalized, op, "\n")
+	}
+	// Also break on common grouping characters.
+	for _, r := range []string{"(", ")", "{", "}", "<", ">", "`"} {
+		normalized = strings.ReplaceAll(normalized, r, "\n")
+	}
+
+	var bases []string
+	for _, line := range strings.Split(normalized, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		// Skip leading environment variable assignments (e.g. FOO=bar cmd).
+		idx := 0
+		for idx < len(fields) && strings.Contains(fields[idx], "=") && !strings.HasPrefix(fields[idx], "=") {
+			// ensure it looks like an assignment
+			parts := strings.SplitN(fields[idx], "=", 2)
+			if len(parts) == 2 && parts[0] != "" && !strings.ContainsAny(parts[0], " /\\") {
+				idx++
+				continue
+			}
+			break
+		}
+		if idx < len(fields) {
+			bases = append(bases, fields[idx])
+		}
+	}
+	if len(bases) == 0 {
+		fields := strings.Fields(command)
+		if len(fields) > 0 {
+			bases = append(bases, fields[0])
+		}
+	}
+	return bases
+}
+
+// hasShellOperator reports whether the command contains shell control
+// operators or metacharacters that could be used to chain or inject
+// additional commands.
+func hasShellOperator(command string) bool {
+	for _, op := range []string{";", "&&", "||", "|", "\n", "`", "$(", "${", ">", "<", "(", ")"} {
+		if strings.Contains(command, op) {
+			return true
+		}
+	}
+	return false
+}
+
 func NewBashTool(permission permission.Service) BaseTool {
 	return &bashTool{
 		permissions: permission,
@@ -243,21 +302,28 @@ func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		return NewTextErrorResponse("missing command"), nil
 	}
 
-	baseCmd := strings.Fields(params.Command)[0]
-	for _, banned := range bannedCommands {
-		if strings.EqualFold(baseCmd, banned) {
-			return NewTextErrorResponse(fmt.Sprintf("command '%s' is not allowed", baseCmd)), nil
+	baseCommands := bashBaseCommands(params.Command)
+	for _, baseCmd := range baseCommands {
+		for _, banned := range bannedCommands {
+			if strings.EqualFold(baseCmd, banned) {
+				return NewTextErrorResponse(fmt.Sprintf("command '%s' is not allowed", baseCmd)), nil
+			}
 		}
 	}
 
 	isSafeReadOnly := false
 	cmdLower := strings.ToLower(params.Command)
 
-	for _, safe := range safeReadOnlyCommands {
-		if strings.HasPrefix(cmdLower, strings.ToLower(safe)) {
-			if len(cmdLower) == len(safe) || cmdLower[len(safe)] == ' ' || cmdLower[len(safe)] == '-' {
-				isSafeReadOnly = true
-				break
+	// A command is only considered safe/read-only when it is a single, simple
+	// command without any shell control operators that could be used to chain
+	// or inject additional (possibly dangerous) commands.
+	if !hasShellOperator(params.Command) {
+		for _, safe := range safeReadOnlyCommands {
+			if strings.HasPrefix(cmdLower, strings.ToLower(safe)) {
+				if len(cmdLower) == len(safe) || cmdLower[len(safe)] == ' ' || cmdLower[len(safe)] == '-' {
+					isSafeReadOnly = true
+					break
+				}
 			}
 		}
 	}
