@@ -2,6 +2,11 @@ name: build
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.goreleaser.yml'
+      - '.github/workflows/build.yml'
+      - '.github/workflows/release.yml'
   push:
     branches:
       - main
@@ -9,8 +14,7 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   build:
@@ -34,4 +38,19 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: build --snapshot --clean
+          args: release --snapshot --clean
+
+      - name: Verify snapshot packages and checksums
+        working-directory: dist
+        shell: bash
+        run: |
+          shopt -s nullglob
+          linux=(opencode-linux-*.tar.gz)
+          mac=(opencode-mac-*.tar.gz)
+          deb=(opencode-linux-*.deb)
+          rpm=(opencode-linux-*.rpm)
+          test "${#linux[@]}" -eq 2
+          test "${#mac[@]}" -eq 2
+          test "${#deb[@]}" -eq 2
+          test "${#rpm[@]}" -eq 2
+          sha256sum --check checksums.txt
