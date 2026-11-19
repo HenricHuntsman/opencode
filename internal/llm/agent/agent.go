@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -271,7 +272,7 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 		return a.err(fmt.Errorf("failed to create user message: %w", err))
 	}
 	// Append the new user message to the conversation history.
-	msgHistory := append(msgs, userMsg)
+	msgHistory := append(recoverToolHistory(msgs), userMsg)
 
 	for {
 		// Check for cancellation before each iteration
@@ -308,6 +309,64 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 			Done:    true,
 		}
 	}
+}
+
+// recoverToolHistory pairs interrupted calls with an explicit unknown outcome.
+// A process can stop after a side effect but before its tool result is stored.
+// Recovery must never replay the command or imply that it was rolled back.
+func recoverToolHistory(messages []message.Message) []message.Message {
+	history := make([]message.Message, 0, len(messages))
+	for i := 0; i < len(messages); i++ {
+		msg := messages[i]
+		calls := msg.ToolCalls()
+		if msg.Role != message.Assistant || len(calls) == 0 {
+			history = append(history, msg)
+			continue
+		}
+		// A stream can stop before a call has an ID, name, or complete arguments.
+		msg.Parts = make([]message.ContentPart, 0, len(messages[i].Parts))
+		calls = calls[:0]
+		for _, part := range messages[i].Parts {
+			if call, ok := part.(message.ToolCall); ok {
+				if call.ID == "" || call.Name == "" {
+					continue
+				}
+				var input map[string]json.RawMessage
+				if json.Unmarshal([]byte(call.Input), &input) != nil || input == nil {
+					call.Input = "{}"
+				}
+				calls = append(calls, call)
+				part = call
+			}
+			msg.Parts = append(msg.Parts, part)
+		}
+		if len(calls) > 0 || msg.Content().Text != "" {
+			history = append(history, msg)
+		}
+		results := make(map[string]message.ToolResult, len(calls))
+		for i+1 < len(messages) && messages[i+1].Role == message.Tool {
+			i++
+			for _, result := range messages[i].ToolResults() {
+				results[result.ToolCallID] = result
+			}
+		}
+		reply := message.Message{Role: message.Tool, SessionID: msg.SessionID}
+		for _, call := range calls {
+			result, ok := results[call.ID]
+			if !ok {
+				result = message.ToolResult{
+					ToolCallID: call.ID,
+					IsError:    true,
+					Content:    "Session interrupted before this tool result was saved. Its outcome is unknown. Inspect the current project state before retrying.",
+				}
+			}
+			reply.AddToolResult(result)
+		}
+		if len(calls) > 0 {
+			history = append(history, reply)
+		}
+	}
+	return history
 }
 
 func (a *agent) createUserMessage(ctx context.Context, sessionID, content string, attachmentParts []message.ContentPart) (message.Message, error) {
@@ -409,6 +468,12 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 					a.finishMessage(ctx, &assistantMsg, message.FinishReasonPermissionDenied)
 					break
 				}
+				toolResults[i] = message.ToolResult{
+					ToolCallID: toolCall.ID,
+					Content:    toolErr.Error(),
+					IsError:    true,
+				}
+				continue
 			}
 			toolResults[i] = message.ToolResult{
 				ToolCallID: toolCall.ID,

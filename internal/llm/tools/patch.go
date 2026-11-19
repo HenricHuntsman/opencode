@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/opencode-ai/opencode/internal/config"
@@ -61,7 +62,7 @@ CRITICAL REQUIREMENTS FOR USING THIS TOOL:
 3. VALIDATION: Ensure edits result in idiomatic, correct code
 4. PATHS: Always use absolute file paths (starting with /)
 
-The tool will apply all changes in a single atomic operation.`
+All file previews are reviewed before the patch is applied.`
 )
 
 func NewPatchTool(lspClients map[string]*lsp.Client, permissions permission.Service, files history.Service) BaseTool {
@@ -186,78 +187,63 @@ func (p *patchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 		return ToolResponse{}, fmt.Errorf("session ID and message ID are required for creating a patch")
 	}
 
-	// Request permission for all changes
+	// Keep review order stable and reject overlapping source and destination paths.
+	paths := make([]string, 0, len(commit.Changes))
+	targets := make(map[string]struct{})
+	newFiles := make(map[string]bool)
 	for path, change := range commit.Changes {
+		paths = append(paths, path)
+		if err := reservePatchPath(targets, path); err != nil {
+			return NewTextErrorResponse(err.Error()), nil
+		}
+		if change.Type == diff.ActionAdd {
+			newFiles[patchAbsolutePath(path)] = true
+		}
+		if change.MovePath != nil {
+			newFiles[patchAbsolutePath(*change.MovePath)] = true
+			if err := reservePatchPath(targets, *change.MovePath); err != nil {
+				return NewTextErrorResponse(err.Error()), nil
+			}
+		}
+	}
+	sort.Strings(paths)
+	if err := checkPatchFiles(commit, paths); err != nil {
+		return NewTextErrorResponse(err.Error()), nil
+	}
+
+	// Request permission for all changes before applying any.
+	for _, path := range paths {
+		change := commit.Changes[path]
 		switch change.Type {
 		case diff.ActionAdd:
-			dir := filepath.Dir(path)
-			patchDiff, _, _ := diff.GenerateDiff("", *change.NewContent, path)
-			p := p.permissions.Request(
-				permission.CreatePermissionRequest{
-					SessionID:   sessionID,
-					Path:        dir,
-					ToolName:    PatchToolName,
-					Action:      "create",
-					Description: fmt.Sprintf("Create file %s", path),
-					Params: EditPermissionsParams{
-						FilePath: path,
-						Diff:     patchDiff,
-					},
-				},
-			)
-			if !p {
-				return ToolResponse{}, permission.ErrorPermissionDenied
-			}
-		case diff.ActionUpdate:
-			currentContent := ""
-			if change.OldContent != nil {
-				currentContent = *change.OldContent
-			}
-			newContent := ""
-			if change.NewContent != nil {
-				newContent = *change.NewContent
-			}
-			patchDiff, _, _ := diff.GenerateDiff(currentContent, newContent, path)
-			dir := filepath.Dir(path)
-			p := p.permissions.Request(
-				permission.CreatePermissionRequest{
-					SessionID:   sessionID,
-					Path:        dir,
-					ToolName:    PatchToolName,
-					Action:      "update",
-					Description: fmt.Sprintf("Update file %s", path),
-					Params: EditPermissionsParams{
-						FilePath: path,
-						Diff:     patchDiff,
-					},
-				},
-			)
-			if !p {
+			if !p.reviewChange(sessionID, path, "create", "", *change.NewContent) {
 				return ToolResponse{}, permission.ErrorPermissionDenied
 			}
 		case diff.ActionDelete:
-			dir := filepath.Dir(path)
-			patchDiff, _, _ := diff.GenerateDiff(*change.OldContent, "", path)
-			p := p.permissions.Request(
-				permission.CreatePermissionRequest{
-					SessionID:   sessionID,
-					Path:        dir,
-					ToolName:    PatchToolName,
-					Action:      "delete",
-					Description: fmt.Sprintf("Delete file %s", path),
-					Params: EditPermissionsParams{
-						FilePath: path,
-						Diff:     patchDiff,
-					},
-				},
-			)
-			if !p {
+			if !p.reviewChange(sessionID, path, "delete", *change.OldContent, "") {
+				return ToolResponse{}, permission.ErrorPermissionDenied
+			}
+		case diff.ActionUpdate:
+			if change.MovePath != nil {
+				if !p.reviewChange(sessionID, path, "delete", *change.OldContent, "") ||
+					!p.reviewChange(sessionID, *change.MovePath, "create", "", *change.NewContent) {
+					return ToolResponse{}, permission.ErrorPermissionDenied
+				}
+			} else if !p.reviewChange(sessionID, path, "update", *change.OldContent, *change.NewContent) {
 				return ToolResponse{}, permission.ErrorPermissionDenied
 			}
 		}
 	}
 
-	// Apply the changes to the filesystem
+	// A user or another process may edit a file while approval is open.
+	if err := ctx.Err(); err != nil {
+		return ToolResponse{}, err
+	}
+	if err := checkPatchFiles(commit, paths); err != nil {
+		return NewTextErrorResponse(err.Error()), nil
+	}
+
+	// Apply the changes to the filesystem.
 	err = diff.ApplyCommit(commit, func(path string, content string) error {
 		absPath := path
 		if !filepath.IsAbs(absPath) {
@@ -271,6 +257,18 @@ func (p *patchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 			return fmt.Errorf("failed to create parent directories for %s: %w", absPath, err)
 		}
 
+		if newFiles[filepath.Clean(absPath)] {
+			file, err := os.OpenFile(absPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+			if err != nil {
+				return err
+			}
+			_, writeErr := file.WriteString(content)
+			closeErr := file.Close()
+			if writeErr != nil {
+				return writeErr
+			}
+			return closeErr
+		}
 		return os.WriteFile(absPath, []byte(content), 0o644)
 	}, func(path string) error {
 		absPath := path
@@ -284,12 +282,24 @@ func (p *patchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 		return NewTextErrorResponse(fmt.Sprintf("failed to apply patch: %s", err)), nil
 	}
 
-	// Update file history for all modified files
+	// A move changes both paths. Keep both in history, diagnostics, and the tool result.
+	for _, path := range paths {
+		change := commit.Changes[path]
+		if change.MovePath != nil {
+			commit.Changes[*change.MovePath] = diff.FileChange{Type: diff.ActionAdd, NewContent: change.NewContent}
+			commit.Changes[path] = diff.FileChange{Type: diff.ActionDelete, OldContent: change.OldContent}
+			paths = append(paths, *change.MovePath)
+		}
+	}
+	sort.Strings(paths)
+
+	// Update file history for all modified files.
 	changedFiles := []string{}
 	totalAdditions := 0
 	totalRemovals := 0
 
-	for path, change := range commit.Changes {
+	for _, path := range paths {
+		change := commit.Changes[path]
 		absPath := path
 		if !filepath.IsAbs(absPath) {
 			wd := config.WorkingDirectory()
@@ -369,4 +379,69 @@ func (p *patchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 			Additions:    totalAdditions,
 			Removals:     totalRemovals,
 		}), nil
+}
+
+func (p *patchTool) reviewChange(sessionID, path, action, before, after string) bool {
+	path = patchAbsolutePath(path)
+	preview, _, _ := diff.GenerateDiff(before, after, path)
+	return p.permissions.Request(permission.CreatePermissionRequest{
+		SessionID:   sessionID,
+		Path:        path,
+		ToolName:    PatchToolName,
+		Action:      action,
+		Description: fmt.Sprintf("Patch: %s %s", action, path),
+		Params:      EditPermissionsParams{FilePath: path, Diff: preview},
+	})
+}
+
+func patchAbsolutePath(path string) string {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(config.WorkingDirectory(), path)
+	}
+	return filepath.Clean(path)
+}
+
+func reservePatchPath(targets map[string]struct{}, path string) error {
+	path = patchAbsolutePath(path)
+	if _, exists := targets[path]; exists {
+		return fmt.Errorf("patch uses file %s more than once", path)
+	}
+	targets[path] = struct{}{}
+	return nil
+}
+
+func checkPatchFiles(commit diff.Commit, paths []string) error {
+	for _, path := range paths {
+		change := commit.Changes[path]
+		absolute := patchAbsolutePath(path)
+		if change.OldContent == nil {
+			if err := checkPatchDestination(absolute); err != nil {
+				return err
+			}
+		} else {
+			current, err := os.ReadFile(absolute)
+			if err != nil {
+				return fmt.Errorf("cannot verify reviewed file %s: %w", path, err)
+			}
+			if string(current) != *change.OldContent {
+				return fmt.Errorf("file %s changed after the patch was prepared; read it again and request a new review", path)
+			}
+		}
+		if change.MovePath != nil {
+			if err := checkPatchDestination(patchAbsolutePath(*change.MovePath)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func checkPatchDestination(path string) error {
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		if err != nil {
+			return fmt.Errorf("cannot verify patch destination %s: %w", path, err)
+		}
+		return fmt.Errorf("patch destination %s already exists; prepare a new patch", path)
+	}
+	return nil
 }
