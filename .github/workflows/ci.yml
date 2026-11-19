@@ -27,3 +27,24 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+
+      - name: Rebuild and smoke-test the Linux executable
+        shell: bash
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          work="$(mktemp -d)"
+          trap 'rm -rf -- "$work"' EXIT
+          for copy in first second; do
+            mkdir -p "$work/$copy/source"
+            git archive HEAD | tar -x -C "$work/$copy/source"
+            (
+              cd "$work/$copy/source"
+              GOCACHE="$work/$copy/cache" go build -mod=readonly -trimpath -buildvcs=false -o "$work/$copy/opencode" .
+            )
+          done
+          sha256sum "$work/first/opencode" "$work/second/opencode"
+          cmp "$work/first/opencode" "$work/second/opencode"
+          "$work/first/opencode" --version
+          "$work/first/opencode" --help > "$work/help.txt"
+          grep -Fq -- '--version' "$work/help.txt"
